@@ -216,6 +216,19 @@ where
         self.update_with_mode_internal(black_buffer, red_buffer, mode, delay, true)
     }
 
+    /// Update display with specified refresh mode without loading built-in LUTs
+    ///
+    /// Useful for panels that rely on OTP LUTs with specific update control values.
+    pub fn update_with_mode_no_lut<D: DelayNs>(
+        &mut self,
+        black_buffer: &[u8],
+        red_buffer: &[u8],
+        mode: RefreshMode,
+        delay: &mut D,
+    ) -> DisplayResult<I> {
+        self.update_with_mode_internal(black_buffer, red_buffer, mode, delay, false)
+    }
+
     /// Update display with specified refresh mode and custom LUT
     ///
     /// Loads the provided LUT before refreshing, and does not overwrite it
@@ -239,6 +252,17 @@ where
         delay: &mut D,
     ) -> DisplayResult<I> {
         self.update_region_internal(update, delay, true)
+    }
+
+    /// Update a specific region without loading built-in LUTs
+    ///
+    /// Useful for panels that rely on OTP LUTs with specific update control values.
+    pub fn update_region_no_lut<D: DelayNs>(
+        &mut self,
+        update: UpdateRegion<'_>,
+        delay: &mut D,
+    ) -> DisplayResult<I> {
+        self.update_region_internal(update, delay, false)
     }
 
     /// Update a specific region of the display using a custom LUT
