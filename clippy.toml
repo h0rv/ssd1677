@@ -1,0 +1,30 @@
+msrv = "1.85.0"
+avoid-breaking-exported-api = true
+
+# Keep complexity low for embedded reliability.
+cognitive-complexity-threshold = 20
+excessive-nesting-threshold = 4
+too-many-arguments-threshold = 6
+too-many-lines-threshold = 200
+type-complexity-threshold = 50
+enum-variant-name-threshold = 3
+max-struct-bools = 2
+max-fn-params-bools = 2
+single-char-binding-names-threshold = 3
+literal-representation-threshold = 16
+max-suggested-slice-pattern-length = 3
+vec-box-size-threshold = 4096
+
+# Disallow common foot-guns in embedded contexts.
+disallowed-macros = [
+    { path = "dbg", allow-invalid = true },
+    { path = "println", allow-invalid = true },
+    { path = "print", allow-invalid = true },
+    { path = "eprintln", allow-invalid = true },
+    { path = "eprint", allow-invalid = true },
+]
+disallowed-methods = ["core::mem::forget", "std::mem::forget", "core::mem::transmute", "std::mem::transmute"]
+disallowed-names = ["foo", "bar", "baz", "tmp", "todo", "fixme", "hack"]
+
+# Common acronyms used in this crate's docs.
+doc-valid-idents = ["SSD1677", "EPD", "EInk", "SPI", "I2C", "GPIO", "RAM", "OTP", "VCOM", "VGH", "VGL", "VSH1", "VSH2", "VSL"]
