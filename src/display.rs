@@ -547,7 +547,12 @@ where
         delay: &mut D,
         use_builtin_lut: bool,
     ) -> DisplayResult<I> {
-        let use_red = !red_buffer.is_empty() && red_buffer.iter().any(|byte| *byte != 0);
+        let explicit_red = !red_buffer.is_empty() && red_buffer.iter().any(|byte| *byte != 0);
+        let single_buffer_fast = mode == RefreshMode::Fast && !explicit_red;
+        // Keep RED RAM in sync for the next differential fast refresh even when the caller
+        // only provides a BW buffer.
+        let sync_red_before_refresh = mode != RefreshMode::Fast && !explicit_red;
+        let use_red_for_refresh = explicit_red || single_buffer_fast;
         let expected_size = self.config.dimensions.buffer_size();
 
         if black_buffer.len() < expected_size {
@@ -556,7 +561,7 @@ where
                 provided: black_buffer.len(),
             });
         }
-        if use_red && red_buffer.len() < expected_size {
+        if explicit_red && red_buffer.len() < expected_size {
             return Err(Error::BufferTooSmall {
                 required: expected_size,
                 provided: red_buffer.len(),
@@ -581,12 +586,28 @@ where
         self.send_command(WRITE_RAM_BW)?;
         self.send_data(&black_buffer[..expected_size])?;
 
-        if use_red {
+        if explicit_red {
             self.send_command(WRITE_RAM_RED)?;
             self.send_data(&red_buffer[..expected_size])?;
+        } else if sync_red_before_refresh {
+            self.send_command(WRITE_RAM_RED)?;
+            self.send_data(&black_buffer[..expected_size])?;
         }
 
-        self.refresh_with_mode(mode, delay, false, use_red)
+        self.refresh_with_mode(mode, delay, false, use_red_for_refresh)?;
+
+        if single_buffer_fast {
+            self.set_ram_area(
+                0,
+                0,
+                self.config.dimensions.cols,
+                self.config.dimensions.rows,
+            )?;
+            self.send_command(WRITE_RAM_RED)?;
+            self.send_data(&black_buffer[..expected_size])?;
+        }
+
+        Ok(())
     }
 
     fn update_region_internal<D: DelayNs>(
@@ -595,8 +616,11 @@ where
         delay: &mut D,
         use_builtin_lut: bool,
     ) -> DisplayResult<I> {
-        let use_red =
+        let explicit_red =
             !update.red_buffer.is_empty() && update.red_buffer.iter().any(|byte| *byte != 0);
+        let single_buffer_fast = update.mode == RefreshMode::Fast && !explicit_red;
+        let sync_red_before_refresh = update.mode != RefreshMode::Fast && !explicit_red;
+        let use_red_for_refresh = explicit_red || single_buffer_fast;
         let expected_size = update.region.buffer_size();
 
         if update.black_buffer.len() < expected_size {
@@ -605,7 +629,7 @@ where
                 provided: update.black_buffer.len(),
             });
         }
-        if use_red && update.red_buffer.len() < expected_size {
+        if explicit_red && update.red_buffer.len() < expected_size {
             return Err(Error::BufferTooSmall {
                 required: expected_size,
                 provided: update.red_buffer.len(),
@@ -630,12 +654,28 @@ where
         self.send_command(WRITE_RAM_BW)?;
         self.send_data(&update.black_buffer[..expected_size])?;
 
-        if use_red {
+        if explicit_red {
             self.send_command(WRITE_RAM_RED)?;
             self.send_data(&update.red_buffer[..expected_size])?;
+        } else if sync_red_before_refresh {
+            self.send_command(WRITE_RAM_RED)?;
+            self.send_data(&update.black_buffer[..expected_size])?;
         }
 
-        self.refresh_with_mode(update.mode, delay, false, use_red)
+        self.refresh_with_mode(update.mode, delay, false, use_red_for_refresh)?;
+
+        if single_buffer_fast {
+            self.set_ram_area(
+                update.region.x,
+                update.region.y,
+                update.region.w,
+                update.region.h,
+            )?;
+            self.send_command(WRITE_RAM_RED)?;
+            self.send_data(&update.black_buffer[..expected_size])?;
+        }
+
+        Ok(())
     }
 }
 
@@ -825,6 +865,27 @@ mod tests {
     }
 
     #[test]
+    fn test_update_with_mode_fast_empty_red_uses_differential_compare() {
+        let mut display = test_display();
+        let mut delay = MockDelay;
+        let buffer_size = display.dimensions().buffer_size();
+        let black_buf = alloc::vec![0xAAu8; buffer_size];
+        let red_buf = alloc::vec![0x00u8; buffer_size];
+
+        let result = display.update_with_mode(&black_buf, &red_buf, RefreshMode::Fast, &mut delay);
+        assert!(result.is_ok());
+
+        let ctrl1 = display
+            .interface
+            .command_data
+            .iter()
+            .rev()
+            .find(|(cmd, _)| *cmd == DISPLAY_UPDATE_CTRL1)
+            .map(|(_, data)| data.clone());
+        assert_eq!(ctrl1, Some(alloc::vec![CTRL1_NORMAL]));
+    }
+
+    #[test]
     fn test_update_with_mode_all_zero_red_bypasses_red_plane() {
         let mut display = test_display();
         let mut delay = MockDelay;
@@ -843,6 +904,27 @@ mod tests {
             .map(|(_, data)| data.clone());
 
         assert_eq!(ctrl1, Some(alloc::vec![CTRL1_BYPASS_RED]));
+    }
+
+    #[test]
+    fn test_update_with_mode_full_syncs_red_ram_when_red_is_empty() {
+        let mut display = test_display();
+        let mut delay = MockDelay;
+        let buffer_size = display.dimensions().buffer_size();
+        let black_buf = alloc::vec![0xA5u8; buffer_size];
+        let red_buf = alloc::vec![0x00u8; buffer_size];
+
+        let result = display.update_with_mode(&black_buf, &red_buf, RefreshMode::Full, &mut delay);
+        assert!(result.is_ok());
+
+        let wrote_synced_red = display.interface.command_data.iter().any(|(cmd, data)| {
+            *cmd == WRITE_RAM_RED
+                && data.len() == black_buf.len()
+                && data.first() == black_buf.first()
+                && data.last() == black_buf.last()
+        });
+
+        assert!(wrote_synced_red);
     }
 
     #[test]
